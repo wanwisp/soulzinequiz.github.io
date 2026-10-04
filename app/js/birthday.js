@@ -1,84 +1,81 @@
-// birthday.js — entertainment-personalization calculations from the birthday picker.
-// Per SPECFinal.md §15-16: Western Zodiac + element from date+month (Britannica-style
-// standard tropical zodiac dates), Thai day colour from an OPTIONAL weekday tap
-// (see Design/DesignUX.md §8 open decision #1 — implemented as option (b): no year
-// collected, weekday is a separate optional one-tap field, never required).
-//
-// SOURCING NOTE (honesty flag, matches the project's own draft-flag convention):
-// Britannica's zodiac page and the Times of India numerology-colour article both
-// returned errors (403 / fetch blocked) when queried live for this build. Zodiac
-// date ranges below are the standard tropical-zodiac convention, cross-checked
-// against multiple independent sources — not Britannica-exclusive facts, so this
-// is safe to ship without guessing. The lucky-colour table uses the standard
-// "Moolank" root-number numerology framework (reduce birth-day to a single digit,
-// map to its ruling planet's colours), cross-checked against several numerology
-// sources, because the exact Times of India article text could not be retrieved.
-// If the team can supply the actual ToI article content, swap NUMEROLOGY_TABLE
-// below for the verified version — do not treat this table as a verbatim quote.
+// birthday.js — birthday-layer lookups per Astrology_Colour.md §1–§3.1.
+// Zodiac dates + element: Britannica (via DesignUX.md §6). Vibe/meaning lines are
+// SoulZine [FUN] interpretations. Thai birth-day colour: Thai tradition [TRADITION],
+// from the OPTIONAL weekday pill. Numerology (astroleaf) was dropped on 3 Oct 2026;
+// the lucky colour now comes from today's weekday (data-colours.js).
 
+// Listed Aries-first so the index doubles as the zodiac-dial position (30° each).
 const ZODIAC = [
-  { key: "capricorn", th: "ราศีมังกร", en: "Capricorn", element: "earth",
-    start: [12, 22], end: [1, 19] },
-  { key: "aquarius", th: "ราศีกุมภ์", en: "Aquarius", element: "air",
-    start: [1, 20], end: [2, 18] },
-  { key: "pisces", th: "ราศีมีน", en: "Pisces", element: "water",
-    start: [2, 19], end: [3, 20] },
-  { key: "aries", th: "ราศีเมษ", en: "Aries", element: "fire",
-    start: [3, 21], end: [4, 19] },
-  { key: "taurus", th: "ราศีพฤษภ", en: "Taurus", element: "earth",
-    start: [4, 20], end: [5, 20] },
-  { key: "gemini", th: "ราศีเมถุน", en: "Gemini", element: "air",
-    start: [5, 21], end: [6, 20] },
-  { key: "cancer", th: "ราศีกรกฎ", en: "Cancer", element: "water",
-    start: [6, 21], end: [7, 22] },
-  { key: "leo", th: "ราศีสิงห์", en: "Leo", element: "fire",
-    start: [7, 23], end: [8, 22] },
-  { key: "virgo", th: "ราศีกันย์", en: "Virgo", element: "earth",
-    start: [8, 23], end: [9, 22] },
-  { key: "libra", th: "ราศีตุลย์", en: "Libra", element: "air",
-    start: [9, 23], end: [10, 22] },
-  { key: "scorpio", th: "ราศีพิจิก", en: "Scorpio", element: "water",
-    start: [10, 23], end: [11, 21] },
-  { key: "sagittarius", th: "ราศีธนู", en: "Sagittarius", element: "fire",
-    start: [11, 22], end: [12, 21] }
+  { key: "aries", th: "ราศีเมษ", en: "Aries", glyph: "♈", element: "fire", start: [3, 21], end: [4, 19],
+    rangeTh: "21 มี.ค. – 19 เม.ย.", rangeEn: "21 Mar – 19 Apr",
+    vibeTh: "สายลุย คิดปุ๊บทำปั๊บ เป็นคนแรกที่กดเริ่มเสมอ", vibeEn: "First to hit start. Thinks later, moves now." },
+  { key: "taurus", th: "ราศีพฤษภ", en: "Taurus", glyph: "♉", element: "earth", start: [4, 20], end: [5, 20],
+    rangeTh: "20 เม.ย. – 20 พ.ค.", rangeEn: "20 Apr – 20 May",
+    vibeTh: "มั่นคง สุขุม สายของอร่อย ใครเร่งก็ไม่รีบ", vibeEn: "Steady, calm, loves good food, and won't be rushed." },
+  { key: "gemini", th: "ราศีเมถุน", en: "Gemini", glyph: "♊", element: "air", start: [5, 21], end: [6, 20],
+    rangeTh: "21 พ.ค. – 20 มิ.ย.", rangeEn: "21 May – 20 Jun",
+    vibeTh: "คุยเก่ง ในหัวเปิดไว้ 20 แท็บพร้อมกัน", vibeEn: "Great talker with 20 tabs open in their head." },
+  { key: "cancer", th: "ราศีกรกฎ", en: "Cancer", glyph: "♋", element: "water", start: [6, 21], end: [7, 22],
+    rangeTh: "21 มิ.ย. – 22 ก.ค.", rangeEn: "21 Jun – 22 Jul",
+    vibeTh: "เปลือกแข็งแต่ข้างในนุ่มนิ่ม แอบห่วงทุกคน", vibeEn: "Tough shell, soft centre, quietly looks after everyone." },
+  { key: "leo", th: "ราศีสิงห์", en: "Leo", glyph: "♌", element: "fire", start: [7, 23], end: [8, 22],
+    rangeTh: "23 ก.ค. – 22 ส.ค.", rangeEn: "23 Jul – 22 Aug",
+    vibeTh: "ออร่าตัวแม่ เดินเข้าห้องไหนห้องนั้นสว่าง", vibeEn: "Main-character energy. Lights up any room." },
+  { key: "virgo", th: "ราศีกันย์", en: "Virgo", glyph: "♍", element: "earth", start: [8, 23], end: [9, 22],
+    rangeTh: "23 ส.ค. – 22 ก.ย.", rangeEn: "23 Aug – 22 Sep",
+    vibeTh: "ละเอียดยิบ เช็กลิสต์ครบก่อนออกจากบ้าน", vibeEn: "Detail expert. The checklist is done before leaving home." },
+  { key: "libra", th: "ราศีตุลย์", en: "Libra", glyph: "♎", element: "air", start: [9, 23], end: [10, 22],
+    rangeTh: "23 ก.ย. – 22 ต.ค.", rangeEn: "23 Sep – 22 Oct",
+    vibeTh: "สายบาลานซ์ เลือกร้านข้าวครึ่งชั่วโมงเพราะอยากให้ทุกคนแฮปปี้", vibeEn: "Balance seeker. Takes 30 minutes to pick lunch so everyone's happy." },
+  { key: "scorpio", th: "ราศีพิจิก", en: "Scorpio", glyph: "♏", element: "water", start: [10, 23], end: [11, 21],
+    rangeTh: "23 ต.ค. – 21 พ.ย.", rangeEn: "23 Oct – 21 Nov",
+    vibeTh: "นิ่งแต่ลึก รู้ทุกเรื่องแต่ไม่พูด", vibeEn: "Quiet but deep. Knows everything, says little." },
+  { key: "sagittarius", th: "ราศีธนู", en: "Sagittarius", glyph: "♐", element: "fire", start: [11, 22], end: [12, 21],
+    rangeTh: "22 พ.ย. – 21 ธ.ค.", rangeEn: "22 Nov – 21 Dec",
+    vibeTh: "จองตั๋วก่อน ค่อยคิดทีหลังว่าไปทำอะไร", vibeEn: "Books the ticket first, figures out the trip later." },
+  { key: "capricorn", th: "ราศีมังกร", en: "Capricorn", glyph: "♑", element: "earth", start: [12, 22], end: [1, 19],
+    rangeTh: "22 ธ.ค. – 19 ม.ค.", rangeEn: "22 Dec – 19 Jan",
+    vibeTh: "ค่อย ๆ ปีน แต่ถึงยอดทุกที", vibeEn: "Slow, steady climber who always reaches the top." },
+  { key: "aquarius", th: "ราศีกุมภ์", en: "Aquarius", glyph: "♒", element: "air", start: [1, 20], end: [2, 18],
+    rangeTh: "20 ม.ค. – 18 ก.พ.", rangeEn: "20 Jan – 18 Feb",
+    vibeTh: "ไอเดียแปลกใหม่ มาก่อนเทรนด์สามปี", vibeEn: "Odd ideas, three years ahead of the trend." },
+  { key: "pisces", th: "ราศีมีน", en: "Pisces", glyph: "♓", element: "water", start: [2, 19], end: [3, 20],
+    rangeTh: "19 ก.พ. – 20 มี.ค.", rangeEn: "19 Feb – 20 Mar",
+    vibeTh: "ช่างฝัน อินกับเพลงเศร้าได้ทุกเพลง", vibeEn: "Dreamy. Feels every sad song." }
 ];
 
-const ELEMENT_FLAVOUR = {
-  fire: { th: "ธาตุไฟ กระตือรือร้น กล้าลุย", en: "Fire — energetic, bold, quick to act" },
-  earth: { th: "ธาตุดิน มั่นคง สุขุม", en: "Earth — grounded, steady, calm" },
-  air: { th: "ธาตุลม ว่องไว ชอบสื่อสาร", en: "Air — quick-witted, social, communicative" },
-  water: { th: "ธาตุน้ำ อ่อนไหว ลึกซึ้ง", en: "Water — intuitive, deep, emotionally attuned" }
+const ELEMENTS = {
+  fire:  { key: "fire",  th: "ธาตุไฟ", en: "Fire",  hex: "#FF8A3D", meaningTh: "ร้อนแรง กล้าลุย พลังเหลือเฟือ",   meaningEn: "Bold, warm, endless energy" },
+  earth: { key: "earth", th: "ธาตุดิน", en: "Earth", hex: "#9AA84A", meaningTh: "มั่นคง สุขุม ติดดิน พึ่งพาได้",   meaningEn: "Steady, calm, grounded, dependable" },
+  air:   { key: "air",   th: "ธาตุลม", en: "Air",   hex: "#8FD8EE", meaningTh: "คิดไว พูดเก่ง รักอิสระ",          meaningEn: "Quick-thinking, chatty, free-spirited" },
+  water: { key: "water", th: "ธาตุน้ำ", en: "Water", hex: "#6F8BEA", meaningTh: "อ่อนโยน อ่านใจคนเก่ง รู้สึกลึกซึ้ง", meaningEn: "Gentle, intuitive, feels deeply" }
 };
 
 function getZodiac(day, month) {
   for (const z of ZODIAC) {
     const [sm, sd] = z.start;
     const [em, ed] = z.end;
-    if (sm === em) {
-      if (month === sm && day >= sd && day <= ed) return z;
-    } else if (sm > em) {
-      // wraps year end (Capricorn: Dec 22 - Jan 19)
-      if ((month === sm && day >= sd) || (month === em && day <= ed)) return z;
-    } else {
-      if ((month === sm && day >= sd) || (month === em && day <= ed) ||
-          (month > sm && month < em)) return z;
+    if (sm > em) {
+      if ((month === sm && day >= sd) || (month === em && day <= ed)) return z; // Capricorn wraps
+    } else if ((month === sm && day >= sd) || (month === em && day <= ed) || (month > sm && month < em)) {
+      return z;
     }
   }
   return ZODIAC[0];
 }
 
-function getElement(zodiac) {
-  return { key: zodiac.element, ...ELEMENT_FLAVOUR[zodiac.element] };
-}
+function getZodiacIndex(zodiac) { return ZODIAC.indexOf(zodiac); }
+function getElement(zodiac) { return ELEMENTS[zodiac.element]; }
 
+// Thai birth-day colours — Thai tradition (Astrology_Colour.md §3.1), index = JS getDay()
 const THAI_DAYS = [
-  { key: "sun", th: "วันอาทิตย์", en: "Sunday", colourTh: "แดง", colourEn: "Red", hex: "#E8412C" },
-  { key: "mon", th: "วันจันทร์", en: "Monday", colourTh: "เหลือง", colourEn: "Yellow", hex: "#FFD23F" },
-  { key: "tue", th: "วันอังคาร", en: "Tuesday", colourTh: "ชมพู", colourEn: "Pink", hex: "#FF8CC0" },
-  { key: "wed", th: "วันพุธ", en: "Wednesday", colourTh: "เขียว", colourEn: "Green", hex: "#3FA86B" },
-  { key: "thu", th: "วันพฤหัสบดี", en: "Thursday", colourTh: "ส้ม", colourEn: "Orange", hex: "#FF8A3D" },
-  { key: "fri", th: "วันศุกร์", en: "Friday", colourTh: "ฟ้า", colourEn: "Sky Blue", hex: "#5BB8F0" },
-  { key: "sat", th: "วันเสาร์", en: "Saturday", colourTh: "ม่วง", colourEn: "Purple", hex: "#8E5BD9" }
+  { key: "sun", th: "วันอาทิตย์", en: "Sunday",    short: { th: "อา", en: "Su" }, colourTh: "แดง",   colourEn: "Red",      hex: "#E8412C", vibeTh: "พลังเต็มถัง เปิดวงก่อนใคร",       vibeEn: "Full battery, always opens the party" },
+  { key: "mon", th: "วันจันทร์", en: "Monday",    short: { th: "จ",  en: "Mo" }, colourTh: "เหลือง", colourEn: "Yellow",   hex: "#FFD23F", vibeTh: "อบอุ่น อ่อนโยน ใครอยู่ใกล้ก็สบายใจ", vibeEn: "Warm and gentle, comfortable to be around" },
+  { key: "tue", th: "วันอังคาร", en: "Tuesday",   short: { th: "อ",  en: "Tu" }, colourTh: "ชมพู",  colourEn: "Pink",     hex: "#FF8CC0", vibeTh: "หวานแต่กล้า น่ารักแบบมีพลัง",       vibeEn: "Sweet but brave, cute with power" },
+  { key: "wed", th: "วันพุธ",    en: "Wednesday", short: { th: "พ",  en: "We" }, colourTh: "เขียว", colourEn: "Green",    hex: "#3FA86B", vibeTh: "สดชื่น คุยเก่ง ไปได้กับทุกคน",       vibeEn: "Fresh, chatty, gets along with everyone" },
+  { key: "thu", th: "วันพฤหัสบดี", en: "Thursday", short: { th: "พฤ", en: "Th" }, colourTh: "ส้ม",  colourEn: "Orange",   hex: "#FF8A3D", vibeTh: "สายครู สายแชร์ ชอบสอนชอบเล่า",      vibeEn: "The friend who explains everything" },
+  { key: "fri", th: "วันศุกร์",  en: "Friday",    short: { th: "ศ",  en: "Fr" }, colourTh: "ฟ้า",   colourEn: "Sky blue", hex: "#5BB8F0", vibeTh: "ชิล ๆ ใจดี สายศิลป์",              vibeEn: "Chill, kind, artsy" },
+  { key: "sat", th: "วันเสาร์",  en: "Saturday",  short: { th: "ส",  en: "Sa" }, colourTh: "ม่วง",  colourEn: "Purple",   hex: "#8E5BD9", vibeTh: "ลึกลับ นิ่ง แต่เท่",                 vibeEn: "Mysterious, calm, cool" }
 ];
 
 function getThaiDayColour(weekdayIndex) {
@@ -86,47 +83,7 @@ function getThaiDayColour(weekdayIndex) {
   return THAI_DAYS[weekdayIndex];
 }
 
-const THAI_DAYS_LIST = THAI_DAYS;
-
-// --- Lucky numerology colour (root-number / Moolank framework — see sourcing note) ---
-const NUMEROLOGY_TABLE = {
-  1: { ruler: { th: "อาทิตย์", en: "Sun" }, names: { th: ["ทอง", "ส้มไหม้"], en: ["Gold", "Burnt Orange"] }, hex: ["#D9A21B", "#D9722E"],
-       meaning: { th: "โดดเด่น มั่นใจ พร้อมเป็นผู้นำ", en: "Confident, radiant, natural leader energy." } },
-  2: { ruler: { th: "จันทร์", en: "Moon" }, names: { th: ["มุกขาว", "เงิน"], en: ["Pearl White", "Silver"] }, hex: ["#EDEAE2", "#B9C2CE"],
-       meaning: { th: "อ่อนโยน ใช้สัญชาตญาณ อ่อนไหวง่าย", en: "Gentle, intuitive, emotionally sensitive." } },
-  3: { ruler: { th: "พฤหัสบดี", en: "Jupiter" }, names: { th: ["เหลืองแดดจ้า", "อำพัน"], en: ["Sunshine Yellow", "Amber"] }, hex: ["#F2C230", "#D98A1B"],
-       meaning: { th: "ร่าเริง มองโลกในแง่ดี ชอบเรียนรู้", en: "Optimistic, expansive, drawn to learning." } },
-  4: { ruler: { th: "ราหู", en: "Rahu" }, names: { th: ["เทาหินชนวน", "ฟ้าไฟฟ้า"], en: ["Slate Grey", "Electric Blue"] }, hex: ["#7A828C", "#3B6FD9"],
-       meaning: { th: "มีระบบ รอบคอบ ไม่ชอบความวุ่นวาย", en: "Systematic, careful, dislikes chaos." } },
-  5: { ruler: { th: "พุธ", en: "Mercury" }, names: { th: ["เขียว", "เขียวเทอร์ควอยซ์"], en: ["Green", "Turquoise"] }, hex: ["#3FA86B", "#3FBFB0"],
-       meaning: { th: "ปรับตัวไว ชอบสื่อสาร กระตือรือร้น", en: "Adaptable, communicative, quick-moving." } },
-  6: { ruler: { th: "ศุกร์", en: "Venus" }, names: { th: ["ฟ้าอ่อน", "เขียวอ่อน"], en: ["Powder Blue", "Soft Green"] }, hex: ["#8FC7E8", "#8ED18E"],
-       meaning: { th: "รักสวยงาม อบอุ่น ใส่ใจความสัมพันธ์", en: "Aesthetic, warm, relationship-oriented." } },
-  7: { ruler: { th: "เกตุ", en: "Ketu" }, names: { th: ["เขียวทะเล", "เทาหมอก"], en: ["Sea Green", "Mist Grey"] }, hex: ["#4F9E8A", "#A8ACA8"],
-       meaning: { th: "ชอบครุ่นคิด สนใจเรื่องลึกซึ้ง", en: "Reflective, drawn to depth and quiet inquiry." } },
-  8: { ruler: { th: "เสาร์", en: "Saturn" }, names: { th: ["น้ำเงินเข้ม", "ม่วงเข้ม"], en: ["Deep Navy", "Plum"] }, hex: ["#2B3FA8", "#5B3A6B"],
-       meaning: { th: "อดทน มีวินัย มุ่งมั่นระยะยาว", en: "Disciplined, patient, plays the long game." } },
-  9: { ruler: { th: "อังคาร", en: "Mars" }, names: { th: ["แดงปะการัง", "ชมพูกุหลาบ"], en: ["Coral Red", "Rose Pink"] }, hex: ["#E0522C", "#E27FA0"],
-       meaning: { th: "มีพลัง กล้าตัดสินใจ สู้เพื่อสิ่งที่เชื่อ", en: "Driven, decisive, fights for what it believes." } }
-};
-
-function reduceToRoot(n) {
-  while (n > 9) {
-    n = String(n).split("").reduce((a, d) => a + Number(d), 0);
-  }
-  return n;
-}
-
-function getLuckyColour(day) {
-  const root = reduceToRoot(day);
-  return { root, ...NUMEROLOGY_TABLE[root] };
-}
-
-function getDayOptions(month) {
-  const daysInMonth = { 1:31,2:29,3:31,4:30,5:31,6:30,7:31,8:31,9:30,10:31,11:30,12:31 };
-  const max = daysInMonth[month] || 31;
-  return Array.from({ length: max }, (_, i) => i + 1);
-}
+const DAYS_IN_MONTH = { 1: 31, 2: 29, 3: 31, 4: 30, 5: 31, 6: 30, 7: 31, 8: 31, 9: 30, 10: 31, 11: 30, 12: 31 };
 
 const MONTHS = [
   { num: 1, th: "ม.ค.", en: "Jan" }, { num: 2, th: "ก.พ.", en: "Feb" },

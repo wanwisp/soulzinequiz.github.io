@@ -3,32 +3,35 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Soul Zine — ชาติที่แล้วคุณเคยเป็นอะไร?</title>
-<meta name="description" content="ควิซหาตัวตนชาติที่แล้วของคุณ ใน 60 วินาที เพื่อความบันเทิงล้วนๆ">
+<title>SoulZine — ชาติที่แล้วคุณเคยเป็นอะไร?</title>
+<meta name="description" content="นิตยสารควิซปี 1998 ที่ข้ามเวลามาอยู่ในมือถือคุณ หาตัวตนชาติที่แล้วใน 60 วินาที เพื่อความบันเทิงล้วน ๆ">
+<meta name="theme-color" content="#D8C8FF">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Prompt:ital,wght@0,500;0,700;0,800;1,800;1,900&family=Taviraj:ital,wght@0,400;0,500;0,600;1,400;1,600&family=Noto+Sans+Thai:wdth,wght@62.5..100,400..900&family=Sriracha&display=swap">
-<link rel="stylesheet" href="css/styles.css">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Prompt:ital,wght@0,600;0,700;0,800;0,900;1,900&family=Anuphan:wght@400;500;600;700&family=Silkscreen:wght@400;700&display=swap">
+<link rel="stylesheet" href="app/css/styles.css">
 </head>
-<body>
-<div class="paper-ground" style="position:fixed;inset:0;z-index:-1;"></div>
-<div id="app">
-  <section id="screen-1" class="screen active"></section>
-  <section id="screen-2" class="screen"></section>
-  <section id="screen-loading" class="screen"></section>
-  <section id="screen-3" class="screen"></section>
-</div>
-<!-- Plain scripts (not type="module") loaded in dependency order, sharing one
-     global scope. This lets the app run when index.html is opened directly via
-     file:// -- ES modules refuse to load other local files under file://. -->
-<script src="js/data-archetypes.js"></script>
-<script src="js/data-questions.js"></script>
-<script src="js/scoring.js"></script>
-<script src="js/birthday.js"></script>
-<script src="js/icons.js"></script>
-<script src="js/copy.js"></script>
-<script src="js/wellness.js"></script>
-<script src="js/community.js"></script>
-<script src="js/share.js"></script>
-<script src="js/app.js"></script>
+<body data-step="1">
+<!-- SoulZine app entry point (root page). Code lives in app/; app/index.html redirects here. -->
+<main id="app">
+  <section id="screen-1" class="screen active" aria-label="Welcome"></section>
+  <section id="screen-2" class="screen" aria-label="Quiz"></section>
+  <section id="screen-loading" class="screen" aria-label="Loading"></section>
+  <section id="screen-3" class="screen" aria-label="Result"></section>
+</main>
+<!-- Plain scripts (not type="module") in dependency order, sharing one global scope,
+     so the app also runs when this file is opened directly via file://. -->
+<script src="app/js/data-archetypes.js"></script>
+<script src="app/js/data-questions.js"></script>
+<script src="app/js/scoring.js"></script>
+<script src="app/js/birthday.js"></script>
+<script src="app/js/data-colours.js"></script>
+<script src="app/js/data-soulmatch.js"></script>
+<script src="app/js/icons.js"></script>
+<script src="app/js/copy.js"></script>
+<script src="app/js/wellness.js"></script>
+<script src="app/js/community.js"></script>
+<script src="app/js/share.js"></script>
+<script src="app/js/app.js"></script>
 </body>
 </html>

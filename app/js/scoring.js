@@ -1,37 +1,28 @@
-// scoring.js — deterministic scoring engine per ArchetypeReference.md §3
-// Depends on QUESTIONS from data-questions.js (loaded first as a plain script).
+// scoring.js — deterministic scoring per ArchetypeReference.md §3 (v2 matrix, v3 twins).
+// Depends on GROUP_SCORES and GROUP_ORDER from data-questions.js.
+
+const LETTER_POS = { a: 0, b: 1, c: 2, d: 3, e: 4 };
 
 /**
- * @param {Object} answers - { q1: "a", q2: "c", ... }
- * @returns {{ scores: Object<number, number>, winnerNum: number, sortedNums: number[] }}
+ * @param {Object} groupAnswers - { g1: "a", g2: "c", ... } (one letter per group)
+ * @returns {{ scores: Object<number, number>, winnerNum: number, tied: number[] }}
  */
-function scoreQuiz(answers) {
+function scoreQuiz(groupAnswers) {
   const scores = {};
   for (let n = 1; n <= 30; n++) scores[n] = 0;
 
-  for (const q of QUESTIONS) {
-    const chosenId = answers[q.id];
-    if (!chosenId) continue;
-    const opt = q.options.find(o => o.id === chosenId);
-    if (!opt) continue;
-    for (const [archNum, pts] of opt.score) {
-      scores[archNum] = (scores[archNum] || 0) + pts;
-    }
+  let answerSum = 0;
+  for (const g of GROUP_ORDER) {
+    const letter = groupAnswers[g];
+    if (!letter) continue;
+    answerSum += LETTER_POS[letter];
+    for (const [num, pts] of GROUP_SCORES[g][letter]) scores[num] += pts;
   }
 
-  let winnerNum = null;
-  let bestScore = -1;
-  for (let n = 1; n <= 30; n++) {
-    if (scores[n] > bestScore) {
-      bestScore = scores[n];
-      winnerNum = n;
-    }
-    // tie-break: lowest ARCHETYPE_ID wins, so strictly-greater only replaces
-  }
+  // Tie-break §3.3: tied archetypes sorted by ID, pick index (sum of answer positions) mod count.
+  const top = Math.max(...Object.values(scores));
+  const tied = Object.keys(scores).map(Number).filter(n => scores[n] === top).sort((a, b) => a - b);
+  const winnerNum = tied[answerSum % tied.length];
 
-  const sortedNums = Object.keys(scores)
-    .map(Number)
-    .sort((a, b) => scores[b] - scores[a] || a - b);
-
-  return { scores, winnerNum, sortedNums };
+  return { scores, winnerNum, tied };
 }

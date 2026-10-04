@@ -1,769 +1,687 @@
-// app.js — Soul Zine main application logic.
-// Single page, 3-step state machine. No backend; session data only (SPECFinal.md §21).
-// Loaded as a plain script (not type="module") so the app also runs when index.html
-// is opened directly via file:// (ES modules are blocked cross-file under file://).
-// Depends on globals defined by the scripts loaded before this one in index.html:
-// ARCHETYPES, ARCHETYPE_BY_ID (data-archetypes.js), QUESTIONS (data-questions.js),
-// scoreQuiz (scoring.js), getZodiac/getElement/getThaiDayColour/getLuckyColour/
-// getDayOptions/MONTHS/THAI_DAYS_LIST (birthday.js), renderIcon/renderScene/
+// app.js — SoulZine main application logic (v2, 4 Oct 2026).
+// One page, state-based flow per DesignUX.md v2.1:
+//   Welcome (birthday) → 6 questions (one random twin per group) → Loading (dark, 1.6 s)
+//   → Result [การ์ด | ตัวตน | ไลฟ์สไตล์ | เทียบ] + IG Story preview.
+// No backend; the research object lives in sessionStorage only (spec §21).
+// Plain script (not a module) so index.html also works when opened via file://.
+// Globals used: ARCHETYPES (data-archetypes.js), QUESTION_POOL/GROUP_SCENE/drawQuestions
+// (data-questions.js), scoreQuiz (scoring.js), ZODIAC/getZodiac/getZodiacIndex/getElement/
+// THAI_DAYS/getThaiDayColour/DAYS_IN_MONTH/MONTHS (birthday.js), getTodayLucky
+// (data-colours.js), SOULMATCH/drawSoulmatch (data-soulmatch.js), renderIcon/renderScene/
 // renderUIIcon (icons.js), t (copy.js), getWellnessBundle (wellness.js),
-// getCompareChartData/getIllustrativeRarity/getIllustrativeResearchSnapshot
-// (community.js), renderStoryCanvas/shareStoryImage (share.js).
+// getCompareChartData/getIllustrativeRarity/getIllustrativeResearchSnapshot (community.js),
+// renderStoryCanvas/shareStoryImage (share.js).
 
-const QUIZ_VERSION = "v1";
+const QUIZ_VERSION = "v2";
+const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 const state = {
   lang: "th",
-  step: 1,
+  step: 1,               // 1 | 2 | "loading" | 3
   qIndex: 0,
+  shown: [],             // the 6 drawn question objects
+  selections: {},        // qid -> letter (tapped, not yet confirmed)
   birthday: { day: null, month: null, weekday: null },
-  answers: {},
-  result: null, // { archetypeNum, scores }
-  fadeObserver: null,
+  result: null,          // { num, scores, picks }
+  tab: 0,
+  zen: { interval: null, secs: 180 }
 };
 
-// ---------- Session data object (SPECFinal.md §21) ----------
-function initSessionData() {
-  const existing = sessionStorage.getItem("soulzine_v1");
-  if (existing) {
-    try { return JSON.parse(existing); } catch (e) { /* fallthrough */ }
-  }
+const today = getTodayLucky();
+
+// ---------- Research object (spec §21, DesignUX §8) ----------
+function freshSession() {
   return {
     timestamp: new Date().toISOString(),
     quiz_version: QUIZ_VERSION,
     language: state.lang,
     birth: { day: null, month: null },
-    derived: { zodiac: null, element: null, thai_day_color: null, lucky_color: null },
+    derived: { zodiac: null, element: null, thai_day_color: null },
+    shown: [],
     answers: {},
+    groups: {},
     archetype: null,
     scores: {}
   };
 }
-let sessionData = initSessionData();
+let sessionData = freshSession();
 function persistSession() {
   sessionData.language = state.lang;
-  sessionStorage.setItem("soulzine_v1", JSON.stringify(sessionData));
+  try { sessionStorage.setItem("soulzine_v2", JSON.stringify(sessionData)); } catch (e) { /* storage unavailable: keep in memory */ }
 }
 
 // ---------- Utilities ----------
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
-function el(tag, className, html) {
-  const e = document.createElement(tag);
-  if (className) e.className = className;
-  if (html != null) e.innerHTML = html;
-  return e;
-}
+const L = () => state.lang;
+
 function showToast(msg) {
   let toast = $(".toast");
   if (!toast) {
-    toast = el("div", "toast");
+    toast = document.createElement("div");
+    toast.className = "toast";
+    toast.setAttribute("role", "status");
     document.body.appendChild(toast);
   }
   toast.textContent = msg;
   toast.classList.add("show");
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => toast.classList.remove("show"), 2200);
+  toast._t = setTimeout(() => toast.classList.remove("show"), 2000);
 }
 
-// ---------- Language toggle (rendered on every step) ----------
-function renderLangToggle(container) {
-  container.innerHTML = "";
-  const wrap = el("div", "lang-toggle");
-  wrap.setAttribute("role", "group");
-  wrap.setAttribute("aria-label", t(state.lang, "langToggleAria"));
-  ["th", "en"].forEach(code => {
-    const btn = el("button", code === state.lang ? "active" : "", code.toUpperCase());
-    btn.type = "button";
-    btn.addEventListener("click", () => {
-      if (state.lang === code) return;
-      state.lang = code;
-      persistSession();
-      renderCurrentStep();
-    });
-    wrap.appendChild(btn);
-  });
-  container.appendChild(wrap);
+function colourName(c) { return L() === "th" ? c.th : c.en; }
+
+const SPARKLES = `
+  <svg class="spk spk-1" viewBox="0 0 20 20"><path d="M10 0l2.4 7.6L20 10l-7.6 2.4L10 20l-2.4-7.6L0 10l7.6-2.4z"/></svg>
+  <svg class="spk spk-2" viewBox="0 0 20 20"><path d="M10 0l2.4 7.6L20 10l-7.6 2.4L10 20l-2.4-7.6L0 10l7.6-2.4z"/></svg>
+  <svg class="spk spk-3" viewBox="0 0 20 20"><path d="M10 0l2.4 7.6L20 10l-7.6 2.4L10 20l-2.4-7.6L0 10l7.6-2.4z"/></svg>`;
+
+function decoLayer(word) {
+  return `<div class="deco" aria-hidden="true">
+    <div class="dotgrid"></div>
+    <div class="ring ring-neon"></div><div class="ring ring-dash"></div>
+    <div class="outline-word">${word}</div>${SPARKLES}
+  </div>`;
+}
+
+function roundLangButton() {
+  return `<button type="button" class="round-btn lang-round" data-action="lang" aria-label="${t(L(), "langSwitchAria")}">${t(L(), "langOther")}</button>`;
+}
+
+// Page-flip transition (DesignSystem §5). direction: "fwd" | "back" | null
+function flip(screen, direction) {
+  if (!direction) return;
+  const cls = REDUCED_MOTION ? "fade-in" : direction === "back" ? "flip-back" : "flip-fwd";
+  screen.classList.remove("flip-fwd", "flip-back", "fade-in");
+  void screen.offsetWidth;
+  screen.classList.add(cls);
 }
 
 // ============================================================
-// STEP 1 — Welcome & Birthday Picker
+// STEP 1 — Welcome & birthday
 // ============================================================
-function renderStep1() {
-  const L = state.lang;
+function renderWelcome() {
+  const lang = L();
   const root = $("#screen-1");
-  root.innerHTML = "";
+  const barcode = Array.from({ length: 17 }, (_, i) => `<rect x="${i * 3.7}" y="0" width="${[2, 1, 3][i % 3]}" height="22"></rect>`).join("");
+  root.innerHTML = `
+    ${decoLayer("ZINE")}
+    <div class="page welcome">
+      <div class="wm-row">
+        <div class="issue">${t(lang, "issue")}</div>
+        <div class="seg-toggle" role="group" aria-label="Language">
+          <button type="button" data-lang="th" class="${lang === "th" ? "on" : ""}" aria-pressed="${lang === "th"}">TH</button>
+          <button type="button" data-lang="en" class="${lang === "en" ? "on" : ""}" aria-pressed="${lang === "en"}">EN</button>
+        </div>
+      </div>
+      <div class="masthead">Soul<span>Zine</span></div>
+      <div class="neon-rule" aria-hidden="true"></div>
+      <div class="cover-lines">
+        <span class="sticker sticker-lime">${t(lang, "coverLine1")}</span>
+        <span class="sticker sticker-neon">${t(lang, "coverLine2")}</span>
+      </div>
+      <h1 class="hook">${t(lang, "headline1")}<br>${t(lang, "headline2")}</h1>
+      <p class="sub-hook">${t(lang, "subHook")}</p>
+      <div class="pill-row">
+        <div class="status-pill"><span class="live-dot"></span><b class="live">${t(lang, "statusLive")}</b><b>${t(lang, "statusNum")}</b><span>${t(lang, "statusText")}</span></div>
+        <div class="status-pill"><span class="swatch-dot" style="background:${today.headline.hex}"></span><b>${t(lang, "todayChip", colourName(today.headline))}</b></div>
+      </div>
 
-  const header = el("div", "header-row");
-  header.appendChild(el("div", "script-mark", t(L, "scriptMark")));
-  const toggleHost = el("div");
-  header.appendChild(toggleHost);
-  root.appendChild(header);
-  renderLangToggle(toggleHost);
+      <div class="bday-card">
+        <div class="dial" id="dial" role="img"><div class="dial-ticks"></div><div class="dial-needle" id="dial-needle"></div><div class="dial-core"><small>ZODIAC</small><span id="dial-sign">— —</span></div></div>
+        <h2 class="card-title">${t(lang, "birthdayTitle")}</h2>
+        <div class="stepper-grid">
+          ${stepperHTML("day", t(lang, "dayLabel"), t(lang, "decDay"), t(lang, "incDay"))}
+          ${stepperHTML("month", t(lang, "monthLabel"), t(lang, "decMonth"), t(lang, "incMonth"))}
+        </div>
+        <div class="result-bar" id="result-bar" aria-live="polite"></div>
+        <p class="weekday-caption" id="weekday-cap">${t(lang, "weekdayCaption")}</p>
+        <div class="weekday-row" role="radiogroup" aria-labelledby="weekday-cap">
+          ${THAI_DAYS.map((d, i) => `<button type="button" role="radio" class="weekday-pill" data-weekday="${i}" aria-checked="${state.birthday.weekday === i}" aria-label="${lang === "th" ? d.th : d.en}"><span class="dot" style="background:${d.hex}"></span>${d.short[lang]}</button>`).join("")}
+        </div>
+      </div>
 
-  const hookWrap = el("div", "hook-sticker-wrap");
-  const sticker = el("div", "hook-sticker");
-  sticker.innerHTML = `<span class="num">${t(L, "hookBadgeNum")}</span><span class="cap">${t(L, "hookBadgeCap").replace("\n", "<br>")}</span>`;
-  hookWrap.appendChild(sticker);
-  root.appendChild(hookWrap);
-
-  root.appendChild(el("h1", "headline", t(L, "headline1")));
-  const h2 = el("div", "headline-2", t(L, "headline2"));
-  root.appendChild(h2);
-  root.appendChild(el("p", "sub-hook", t(L, "subHook")));
-  root.appendChild(el("p", "explainer", t(L, "explainer")));
-
-  const strip = el("div", "illu-strip");
-  ["boba", "cloud", "cassette", "sprout"].forEach(k => {
-    const holder = el("div");
-    holder.innerHTML = renderIcon(k, k === "boba" ? "#8A5A2E" : k === "cloud" ? "#A9A9D8" : k === "cassette" ? "#8A5A3C" : "#6FBF6F");
-    strip.appendChild(holder.firstChild);
-  });
-  root.appendChild(strip);
-
-  const card = el("div", "birthday-card");
-  card.appendChild(el("h2", null, t(L, "birthdayTitle")));
-
-  const wheelRow = el("div", "wheel-row");
-  const dayCol = el("div", "wheel-col");
-  dayCol.appendChild(el("span", "wheel-label", t(L, "dayLabel")));
-  const dayWheel = el("div", "wheel");
-  dayWheel.id = "day-wheel";
-  dayCol.appendChild(dayWheel);
-  wheelRow.appendChild(dayCol);
-
-  const monthCol = el("div", "wheel-col");
-  monthCol.appendChild(el("span", "wheel-label", t(L, "monthLabel")));
-  const monthWheel = el("div", "wheel");
-  monthWheel.id = "month-wheel";
-  monthCol.appendChild(monthWheel);
-  wheelRow.appendChild(monthCol);
-  card.appendChild(wheelRow);
-
-  const chipRow = el("div", "chip-row");
-  chipRow.id = "birthday-chips";
-  card.appendChild(chipRow);
-
-  // optional weekday row
-  const weekdayLabel = el("div", "wheel-label", t(L, "weekdayLabel"));
-  weekdayLabel.style.marginTop = "16px";
-  card.appendChild(weekdayLabel);
-  const weekdayRow = el("div", "chip-row");
-  weekdayRow.id = "weekday-row";
-  const skipChip = el("button", "chip" + (state.birthday.weekday == null ? "" : ""), t(L, "weekdaySkip"));
-  skipChip.type = "button";
-  skipChip.style.cursor = "pointer";
-  skipChip.addEventListener("click", () => { state.birthday.weekday = null; updateBirthdayChips(); renderWeekdayRow(); });
-  weekdayRow.appendChild(skipChip);
-  THAI_DAYS_LIST.forEach((d, idx) => {
-    const chip = el("button", "chip", "");
-    chip.type = "button";
-    chip.style.cursor = "pointer";
-    chip.innerHTML = `<span class="dot" style="background:${d.hex}"></span>${L === "th" ? d.th : d.en}`;
-    chip.addEventListener("click", () => { state.birthday.weekday = idx; updateBirthdayChips(); renderWeekdayRow(); });
-    weekdayRow.appendChild(chip);
-  });
-  card.appendChild(weekdayRow);
-
-  root.appendChild(card);
-
-  const actions = el("div", "step1-actions");
-  const btn = el("button", "btn-primary", `${t(L, "startCta")} →`);
-  btn.id = "start-btn";
-  btn.type = "button";
-  btn.disabled = true;
-  btn.addEventListener("click", () => {
-    if (btn.disabled) return;
-    goToStep2();
-  });
-  actions.appendChild(btn);
-  actions.appendChild(el("p", "privacy-line", t(L, "privacyLine")));
-  root.appendChild(actions);
-
-  buildWheel(dayWheel, getDayOptions(state.birthday.month || 1), state.birthday.day, (val) => {
-    state.birthday.day = val;
-    onBirthdayChange();
-  });
-  buildWheel(monthWheel, MONTHS.map(m => m.num), state.birthday.month, (val) => {
-    state.birthday.month = val;
-    const days = getDayOptions(val);
-    if (state.birthday.day && state.birthday.day > days.length) state.birthday.day = days.length;
-    buildWheel(dayWheel, days, state.birthday.day, (dval) => { state.birthday.day = dval; onBirthdayChange(); });
-    onBirthdayChange();
-  }, (num) => (L === "th" ? MONTHS.find(m => m.num === num).th : MONTHS.find(m => m.num === num).en));
-
-  updateBirthdayChips();
-  renderWeekdayRow();
-
-  function renderWeekdayRow() {
-    $$("#weekday-row .chip").forEach((c, i) => {
-      const isSkip = i === 0;
-      const active = isSkip ? state.birthday.weekday == null : (i - 1) === state.birthday.weekday;
-      c.style.background = active ? "var(--ink)" : "#fff";
-      c.style.color = active ? "var(--yellow)" : "var(--ink)";
-    });
-  }
+      <p class="privacy-line">${t(lang, "privacyLine")}</p>
+      <div class="cover-foot" aria-hidden="true">
+        <svg width="64" height="22" viewBox="0 0 64 22"><g fill="#141414">${barcode}</g></svg><span>p.01</span>
+      </div>
+    </div>
+    <div class="float-bar">
+      <button type="button" class="bar-cta" id="start-btn" data-action="start"></button>
+    </div>`;
+  updateBirthdayUI();
 }
 
-function updateBirthdayChips() {
-  const L = state.lang;
-  const chipRow = $("#birthday-chips");
+function stepperHTML(kind, label, decLabel, incLabel) {
+  return `<div class="stepper">
+    <button type="button" class="step-btn" data-step="${kind}" data-dir="-1" aria-label="${decLabel}">−</button>
+    <div class="step-val"><small>${label}</small><span id="val-${kind}" aria-live="polite">—</span></div>
+    <button type="button" class="step-btn" data-step="${kind}" data-dir="1" aria-label="${incLabel}">+</button>
+  </div>`;
+}
+
+function stepBirthday(kind, dir) {
+  const b = state.birthday;
+  if (kind === "month") {
+    b.month = b.month == null ? (dir > 0 ? 1 : 12) : Math.min(12, Math.max(1, b.month + dir));
+    if (b.day != null) b.day = Math.min(b.day, DAYS_IN_MONTH[b.month]);
+  } else {
+    const max = b.month ? DAYS_IN_MONTH[b.month] : 31;
+    b.day = b.day == null ? (dir > 0 ? 1 : max) : Math.min(max, Math.max(1, b.day + dir));
+  }
+  updateBirthdayUI();
+}
+
+function updateBirthdayUI() {
+  const lang = L();
+  const { day, month, weekday } = state.birthday;
+  $("#val-day").textContent = day ?? "—";
+  $("#val-month").textContent = month ? MONTHS[month - 1][lang] : "—";
+  $$(".weekday-pill").forEach(p => p.setAttribute("aria-checked", String(Number(p.dataset.weekday) === weekday)));
+
+  const bar = $("#result-bar");
   const btn = $("#start-btn");
-  chipRow.innerHTML = "";
-  const { day, month } = state.birthday;
+  const dial = $("#dial");
   if (!day || !month) {
-    const p1 = el("span", "chip placeholder", L === "th" ? "ราศี · ธาตุ" : "Zodiac · Element");
-    const p2 = el("span", "chip placeholder", L === "th" ? "สีมงคล" : "Lucky colour");
-    chipRow.appendChild(p1); chipRow.appendChild(p2);
-    if (btn) { btn.disabled = true; btn.textContent = t(L, "startDisabled"); }
+    bar.innerHTML = `<span class="hint">${t(lang, "resultHint")}</span>`;
+    dial.classList.remove("set");
+    dial.setAttribute("aria-label", t(lang, "dialAria", "—"));
+    $("#dial-sign").textContent = "— —";
+    btn.disabled = true;
+    btn.textContent = t(lang, "startDisabled");
     return;
   }
-  const zodiac = getZodiac(day, month);
-  const element = getElement(zodiac);
-  const lucky = getLuckyColour(day);
-
-  const zChip = el("span", "chip", `${L === "th" ? zodiac.th : zodiac.en} · ${L === "th" ? element.th.split(" ")[0] : element.en.split(" —")[0]}`);
-  chipRow.appendChild(zChip);
-
-  const cChip = el("span", "chip");
-  cChip.innerHTML = `<span class="dot" style="background:${lucky.hex[0]}"></span><span class="dot" style="background:${lucky.hex[1]}"></span>${L === "th" ? lucky.names.th.join(" & ") : lucky.names.en.join(" & ")}`;
-  chipRow.appendChild(cChip);
-
-  if (btn) { btn.disabled = false; btn.innerHTML = `${t(L, "startCta")} →`; }
+  const z = getZodiac(day, month);
+  const el = getElement(z);
+  bar.innerHTML = `<span class="el-dot" style="background:${el.hex}"></span>
+    <b>${lang === "th" ? z.th : z.en} · ${lang === "th" ? el.th : el.en}</b>
+    <span class="muted">${lang === "th" ? z.rangeTh : z.rangeEn}</span>`;
+  dial.classList.add("set");
+  $("#dial-needle").style.transform = `rotate(${getZodiacIndex(z) * 30}deg)`;
+  $("#dial-sign").textContent = `${z.glyph} ${lang === "th" ? z.th.replace("ราศี", "") : z.en}`;
+  dial.setAttribute("aria-label", t(lang, "dialAria", lang === "th" ? z.th : z.en));
+  btn.disabled = false;
+  btn.textContent = t(lang, "startCta");
 
   sessionData.birth = { day, month };
-  sessionData.derived = {
-    zodiac: zodiac.key, element: element.key,
-    thai_day_color: state.birthday.weekday != null ? THAI_DAYS_LIST[state.birthday.weekday].key : null,
-    lucky_color: lucky.names.en.join("_").toLowerCase().replace(/\s+/g, "_")
-  };
+  sessionData.derived = { zodiac: z.key, element: el.key, thai_day_color: weekday != null ? THAI_DAYS[weekday].key : null };
   persistSession();
 }
-function onBirthdayChange() { updateBirthdayChips(); }
-
-function buildWheel(container, values, selectedValue, onChange, formatter) {
-  container.innerHTML = "";
-  container.appendChild(document.createComment("pad-before"));
-  const itemEls = [];
-  values.forEach(v => {
-    const item = el("div", "wheel-item", formatter ? formatter(v) : String(v));
-    item.dataset.value = v;
-    item.addEventListener("click", () => {
-      container.scrollTo({ top: itemEls.indexOf(item) * 40, behavior: "smooth" });
-    });
-    container.appendChild(item);
-    itemEls.push(item);
-  });
-
-  let initialIdx = selectedValue ? values.indexOf(selectedValue) : 0;
-  if (initialIdx < 0) initialIdx = 0;
-  requestAnimationFrame(() => {
-    container.scrollTop = initialIdx * 40;
-    markSelected(initialIdx);
-    if (!selectedValue) {
-      // don't auto-select until user scrolls — start with no value, per DesignUX
-    }
-  });
-
-  let debounceTimer = null;
-  function markSelected(idx) {
-    itemEls.forEach((it, i) => it.classList.toggle("selected", i === idx));
-  }
-  container.addEventListener("scroll", () => {
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      const idx = Math.round(container.scrollTop / 40);
-      const clamped = Math.max(0, Math.min(itemEls.length - 1, idx));
-      markSelected(clamped);
-      onChange(values[clamped]);
-    }, 150);
-  });
-
-  container.tabIndex = 0;
-  container.addEventListener("keydown", (e) => {
-    const cur = Math.round(container.scrollTop / 40);
-    if (e.key === "ArrowUp") { container.scrollTo({ top: (cur - 1) * 40, behavior: "smooth" }); e.preventDefault(); }
-    if (e.key === "ArrowDown") { container.scrollTo({ top: (cur + 1) * 40, behavior: "smooth" }); e.preventDefault(); }
-  });
-}
 
 // ============================================================
-// STEP 2 — Scenario Questions
+// STEP 2 — Questions
 // ============================================================
-function goToStep2() {
-  state.step = 2;
+function startQuiz() {
+  state.shown = drawQuestions();
+  state.selections = {};
   state.qIndex = 0;
-  renderCurrentStep();
-}
-
-function renderStep2() {
-  const L = state.lang;
-  const q = QUESTIONS[state.qIndex];
-  const root = $("#screen-2");
-  root.innerHTML = "";
-  root.classList.add("q-screen");
-
-  const header = el("div", "header-row");
-  const back = el("button", "back-btn");
-  back.type = "button";
-  back.setAttribute("aria-label", t(L, "backAria"));
-  back.innerHTML = `<svg viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="#1A1418" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-  back.addEventListener("click", handleBack);
-  header.appendChild(back);
-  header.appendChild(el("div", "q-counter", t(L, "questionOf", state.qIndex + 1, QUESTIONS.length)));
-  const toggleHost = el("div");
-  header.appendChild(toggleHost);
-  root.appendChild(header);
-  renderLangToggle(toggleHost);
-
-  const progress = el("div", "progress-row");
-  QUESTIONS.forEach((_, i) => {
-    if (i > 0) {
-      const seg = el("div", i <= state.qIndex ? "seg" : "seg todo");
-      progress.appendChild(seg);
-    }
-    if (i === QUESTIONS.length - 1) {
-      const star = el("div");
-      star.innerHTML = `<svg class="progress-star" viewBox="0 0 24 24" fill="${i < state.qIndex ? '#A57FD1' : '#fff'}" stroke="#1A1418" stroke-width="1.5"><path d="M12 2l2.9 6.9L22 9.7l-5.5 4.8L18 22l-6-4-6 4 1.5-7.5L2 9.7l7.1-.8L12 2z"/></svg>`;
-      progress.appendChild(star.firstChild);
-    } else {
-      const dot = el("div", `progress-dot ${i === state.qIndex ? "current" : i < state.qIndex ? "" : "todo"}`);
-      progress.appendChild(dot);
-    }
-  });
-  root.appendChild(progress);
-
-  const scene = el("div", "scene-panel");
-  const sceneIcon = el("div");
-  sceneIcon.innerHTML = renderScene(q.scene);
-  scene.appendChild(sceneIcon.firstChild);
-  root.appendChild(scene);
-
-  root.appendChild(el("h2", "question-text", L === "th" ? q.th : q.en));
-
-  const answers = el("div", "answers");
-  const bullets = L === "th" ? ["ก", "ข", "ค", "ง", "จ"] : ["A", "B", "C", "D", "E"];
-  const existingAnswer = state.answers[q.id];
-  q.options.forEach((opt, i) => {
-    const btn = el("button", "answer-option" + (existingAnswer === opt.id ? " selected" : ""));
-    btn.type = "button";
-    btn.innerHTML = `<span class="bullet">${bullets[i]}</span><span>${L === "th" ? opt.th : opt.en}</span>`;
-    btn.addEventListener("click", () => selectAnswer(q, opt.id, btn, answers));
-    answers.appendChild(btn);
-  });
-  root.appendChild(answers);
-
-  const nudgeIdx = Math.min(state.qIndex, 3);
-  root.appendChild(el("div", "nudge-line", t(L, "nudgeLines")[nudgeIdx] || ""));
-
-  root.setAttribute("data-page-turn", "in");
-  requestAnimationFrame(() => root.removeAttribute("data-page-turn"));
-}
-
-function selectAnswer(q, optId, btnEl, answersContainer) {
-  $$(".answer-option", answersContainer).forEach(b => b.classList.remove("selected"));
-  btnEl.classList.add("selected");
-  state.answers[q.id] = optId;
-  sessionData.answers[q.id] = optId;
+  sessionData.shown = state.shown.map(q => q.id);
+  sessionData.answers = {};
+  sessionData.groups = {};
   persistSession();
-  setTimeout(() => {
-    if (state.qIndex < QUESTIONS.length - 1) {
-      state.qIndex++;
-      renderStep2();
-    } else {
-      goToLoadingThenResult();
-    }
-  }, 350);
+  go(2, "fwd");
+}
+
+function renderQuestion() {
+  const lang = L();
+  const q = state.shown[state.qIndex];
+  const total = state.shown.length;
+  const picked = state.selections[q.id];
+  const progress = ((state.qIndex + (picked ? 1 : 0.35)) / total) * 100;
+  const letters = lang === "th" ? ["ก", "ข", "ค", "ง", "จ"] : ["A", "B", "C", "D", "E"];
+  const isLast = state.qIndex === total - 1;
+  const root = $("#screen-2");
+  root.innerHTML = `
+    ${decoLayer("Q?")}
+    <div class="page question">
+      <div class="q-header">
+        <button type="button" class="round-btn" data-action="back" aria-label="${t(lang, "backAria")}">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div class="count-pill" aria-live="polite">${state.qIndex + 1} / ${total}</div>
+        ${roundLangButton()}
+      </div>
+      <div class="progress"><span class="qtag">Q.${state.qIndex + 1}</span><div class="track"><div class="fill" style="width:${progress}%"></div></div></div>
+      <h2 class="question-text" id="q-text">${lang === "th" ? q.th : q.en}</h2>
+      <div class="answers" role="radiogroup" aria-labelledby="q-text">
+        ${q.options.map((o, i) => `<button type="button" role="radio" class="answer-pill" data-answer="${o.id}" aria-checked="${picked === o.id}">
+            <span class="radio" aria-hidden="true"></span><span class="ans-letter" aria-hidden="true">${letters[i]}</span><span>${lang === "th" ? o.th : o.en}</span>
+          </button>`).join("")}
+      </div>
+      <div class="scene" aria-hidden="true">${renderScene(GROUP_SCENE[q.group])}</div>
+    </div>
+    <div class="quiz-nav">
+      <button type="button" class="nav-btn nav-prev" data-action="back">${t(lang, "prev")}</button>
+      <button type="button" class="nav-btn nav-next" data-action="next" ${picked ? "" : "disabled"}>${picked ? (isLast ? t(lang, "seeResult") : t(lang, "next")) : t(lang, "nextDisabled")}</button>
+    </div>`;
+}
+
+function pickAnswer(letter) {
+  const q = state.shown[state.qIndex];
+  state.selections[q.id] = letter;
+  renderQuestion();
+}
+
+function nextQuestion() {
+  const q = state.shown[state.qIndex];
+  const letter = state.selections[q.id];
+  if (!letter) return;
+  sessionData.answers[q.id] = letter;   // confirmed on "ถัดไป" (DesignUX §8)
+  sessionData.groups[q.group] = letter;
+  persistSession();
+  if (state.qIndex < state.shown.length - 1) {
+    state.qIndex++;
+    renderQuestion();
+    flip($("#screen-2"), "fwd");
+  } else {
+    goToLoading();
+  }
 }
 
 function handleBack() {
-  if (state.qIndex > 0) {
+  if (state.step === 2 && state.qIndex > 0) {
     state.qIndex--;
-    renderStep2();
-  } else {
-    state.step = 1;
-    renderCurrentStep();
+    renderQuestion();
+    flip($("#screen-2"), "back");
+  } else if (state.step === 2) {
+    go(1, "back");
   }
 }
 
 // ============================================================
-// Loading + Step 3 — Soul Dashboard
+// Loading — the one dark screen (from Option C)
 // ============================================================
-function goToLoadingThenResult() {
-  state.step = "loading";
-  renderCurrentStep();
-  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const { scores, winnerNum } = scoreQuiz(state.answers);
-  state.result = { archetypeNum: winnerNum, scores };
+function goToLoading() {
+  const groups = {};
+  state.shown.forEach(q => { groups[q.group] = state.selections[q.id]; });
+  const { scores, winnerNum } = scoreQuiz(groups);
+  state.result = { num: winnerNum, scores, picks: drawSoulmatch(winnerNum) };
+  state.tab = 0;
   sessionData.archetype = `ARCHETYPE_${String(winnerNum).padStart(2, "0")}`;
   sessionData.scores = Object.fromEntries(Object.entries(scores).map(([k, v]) => [`ARCHETYPE_${String(k).padStart(2, "0")}`, v]));
   persistSession();
-  setTimeout(() => {
-    state.step = 3;
-    renderCurrentStep();
-  }, reduced ? 600 : 1300);
+  go("loading", "fwd");
+  setTimeout(() => go(3, "fwd"), REDUCED_MOTION ? 700 : 1600);
 }
 
 function renderLoading() {
-  const L = state.lang;
-  const root = $("#screen-loading");
-  root.innerHTML = "";
-  const wrap = el("div", "loading-screen");
-  wrap.appendChild(el("div", "loading-copy", t(L, "loadingCopy")));
-  const dots = el("div", "loading-dots", `<span class="d"></span><span class="d"></span><span class="d"></span>`);
-  wrap.appendChild(dots);
-  root.appendChild(wrap);
+  const lang = L();
+  $("#screen-loading").innerHTML = `
+    <div class="loading" role="status">
+      <div class="grid-floor" aria-hidden="true"></div><div class="horizon" aria-hidden="true"></div>
+      <div class="px-row" aria-hidden="true"><span>${t(lang, "loadingTop")}</span><span>${t(lang, "loadingTravel")}</span></div>
+      <div class="card-stage" aria-hidden="true">
+        <div class="glow-ring"></div><div class="glow-ring-dash"></div>
+        <div class="card-back"><div class="card-back-in"><b>SZ</b><small>SOUL CARD</small></div></div>
+      </div>
+      <p class="loading-copy">${t(lang, "loadingCopy")}</p>
+      <div class="px-bar" aria-hidden="true"><span>${t(lang, "loadingBar")}</span><div class="blocks">${"<i></i>".repeat(7)}</div></div>
+    </div>`;
 }
 
-function renderStep3() {
-  const L = state.lang;
-  const root = $("#screen-3");
-  root.innerHTML = "";
-  root.classList.add("dash-screen");
+// ============================================================
+// STEP 3 — Result
+// ============================================================
+function renderResult() {
+  const lang = L();
+  const arch = ARCHETYPES.find(a => a.num === state.result.num);
+  const tabs = t(lang, "tabs");
+  $("#screen-3").innerHTML = `
+    ${decoLayer("SOUL")}
+    <div class="page result">
+      <div class="r-header">
+        <div><div class="eyebrow">${t(lang, "resultEyebrow")}</div><h1 class="screen-title">${t(lang, "resultTitle")}</h1></div>
+        ${roundLangButton()}
+      </div>
+      <div class="tabs" role="tablist">
+        ${tabs.map((name, i) => `<button type="button" role="tab" id="tab-${i}" aria-controls="panel" aria-selected="${state.tab === i}" data-tab="${i}">${name}</button>`).join("")}
+      </div>
+      <div class="panel" id="panel" role="tabpanel" aria-labelledby="tab-${state.tab}">
+        ${[cardTab, identityTab, lifestyleTab, compareTab][state.tab](arch)}
+        <p class="disclaimer">${t(lang, "disclaimer")}</p>
+      </div>
+    </div>
+    <div class="float-bar share-bar">
+      <button type="button" class="bar-cta" data-action="story">${renderUIIcon("camera")}${t(lang, "igStoryBtn")}</button>
+      <button type="button" class="bar-icon" data-action="share" aria-label="${t(lang, "shareBtn")}">${renderUIIcon("share")}<small>${t(lang, "shareBtn")}</small></button>
+      <button type="button" class="bar-icon" data-action="retake" aria-label="${t(lang, "retakeBtn")}">${renderUIIcon("retake")}<small>${t(lang, "retakeBtn")}</small></button>
+    </div>`;
+  if (state.tab === 2) syncZenUI();
+}
 
-  const arch = ARCHETYPES.find(a => a.num === state.result.archetypeNum);
+function tag(kind) {
+  const label = { fun: t(L(), "tagFun"), evidence: t(L(), "tagEvidence"), tradition: t(L(), "tagTradition"), sample: t(L(), "sampleData") }[kind];
+  return `<span class="tag tag-${kind}">${label}</span>`;
+}
+
+function soulCard(arch, rarity, el, extraClass = "") {
+  const lang = L();
+  const traits = (lang === "th" ? arch.descriptors.th : arch.descriptors.en).slice(0, 3);
+  return `<div class="soul-card ${extraClass}">
+    <div class="soul-in">
+      <div class="rarity-bar"><span>${t(lang, "rarityTier")} · ${rarity}%</span><span class="el-chip" style="background:${el.hex}">${lang === "th" ? el.th : el.en}</span></div>
+      <div class="soul-art">${renderIcon(arch.icon, arch.cardHex)}</div>
+      <div class="soul-meta">
+        <div class="soul-name">${lang === "th" ? arch.th : arch.en}</div>
+        <div class="soul-en">${(lang === "th" ? arch.en : arch.th).toUpperCase()}</div>
+        <div class="trait-row">${traits.map(d => `<span>${d}</span>`).join("")}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function cardTab(arch) {
+  const lang = L();
+  const rarity = getIllustrativeRarity(arch.num);
+  const el = getElement(getZodiac(state.birthday.day, state.birthday.month));
+  const reveal = state.result.revealed ? "" : "reveal";   // flip-in plays once (DesignUX §4.4)
+  state.result.revealed = true;
+  return `
+    <p class="reveal-intro">${t(lang, "revealIntro")}</p>
+    <div class="card-stage-result">${soulCard(arch, rarity, el, reveal)}</div>
+    <blockquote class="vibe">“${lang === "th" ? arch.vibe.th : arch.vibe.en}”</blockquote>
+    <div class="rarity-note"><span class="asterisk">✳</span><div><b>${t(lang, "rarityNote", rarity)}</b> ${tag("sample")}<p>${lang === "th" ? arch.oneLiner.th : arch.oneLiner.en}</p></div></div>`;
+}
+
+function identityTab(arch) {
+  const lang = L();
   const { day, month, weekday } = state.birthday;
-  const zodiac = getZodiac(day, month);
-  const element = getElement(zodiac);
-  const lucky = getLuckyColour(day);
+  const z = getZodiac(day, month);
+  const el = getElement(z);
   const thaiDay = getThaiDayColour(weekday);
-  const rarityPct = getIllustrativeRarity(arch.num);
-  const wellness = getWellnessBundle(lucky.root);
-
-  const header = el("div", "header-row");
-  header.appendChild(el("div", "eyebrow-label", t(L, "dashHeader")));
-  const toggleHost = el("div");
-  header.appendChild(toggleHost);
-  root.appendChild(header);
-  renderLangToggle(toggleHost);
-
-  // Block 1: Reveal
-  const b1 = el("div", "dash-block reveal-card fade-in");
-  b1.appendChild(el("div", "reveal-intro", t(L, "revealIntro")));
-  const cCard = el("div", "character-card");
-  const stamp = el("div", "rarity-stamp stamp-in");
-  stamp.innerHTML = `<span class="lbl">${t(L, "rarityPrefix")}</span><span class="pct">${rarityPct}%</span><span class="lbl">${t(L, "illustrativeNote")}</span>`;
-  cCard.appendChild(stamp);
-  const iconHost = el("div");
-  iconHost.innerHTML = renderIcon(arch.icon, arch.cardHex);
-  cCard.appendChild(iconHost.firstChild);
-  b1.appendChild(cCard);
-  b1.appendChild(el("div", "entity-th", L === "th" ? arch.th : arch.en));
-  b1.appendChild(el("div", "entity-en", L === "th" ? arch.en : arch.th));
-  b1.appendChild(el("p", "entity-vibe", L === "th" ? arch.vibe.th : arch.vibe.en));
-  b1.appendChild(el("p", "rarity-line", t(L, "rarityLine", rarityPct) + " " + t(L, "illustrativeNote")));
-  root.appendChild(b1);
-
-  // Block 2: Birthday identity
-  const b2 = el("div", "dash-block fade-in");
-  b2.appendChild(blockHead(t(L, "blockBirthdayIdentity"), "fun", t(L, "tagFun")));
-  const infoRow = el("div", "info-card-row");
-  const zCard = el("div", "info-card");
-  zCard.innerHTML = `<div class="k">${t(L, "zodiacLabel")}</div><div class="v">${L === "th" ? zodiac.th : zodiac.en}</div><div class="v2">${L === "th" ? element.th : element.en}</div>`;
-  infoRow.appendChild(zCard);
-  const dayCard = el("div", "info-card");
-  dayCard.innerHTML = `<div class="k">${t(L, "thaiDayLabel")}</div>` + (thaiDay
-    ? `<div class="v">${L === "th" ? thaiDay.colourTh : thaiDay.colourEn}</div><div class="v2">${L === "th" ? thaiDay.th : thaiDay.en}</div>`
-    : `<div class="v2">${t(L, "thaiDayUnknown")}</div>`);
-  infoRow.appendChild(dayCard);
-  b2.appendChild(infoRow);
-
-  const luckyWrap = el("div");
-  luckyWrap.style.marginTop = "16px";
-  luckyWrap.innerHTML = `<div class="info-card k" style="border:none;box-shadow:none;padding:0;background:none;">${t(L, "luckyColourLabel")}</div>`;
-  const bar = el("div", "swatch-bar");
-  lucky.hex.forEach(h => { const s = el("span"); s.style.background = h; bar.appendChild(s); });
-  luckyWrap.appendChild(bar);
-  luckyWrap.appendChild(el("div", "colour-name", L === "th" ? lucky.names.th.join(" & ") : lucky.names.en.join(" & ")));
-  luckyWrap.appendChild(el("div", "colour-meaning", L === "th" ? lucky.meaning.th : lucky.meaning.en));
-  b2.appendChild(luckyWrap);
-  root.appendChild(b2);
-
-  // Block 3: Character brief
-  const b3 = el("div", "dash-block fade-in");
-  b3.appendChild(blockHead(t(L, "blockCharacterBrief"), "fun", t(L, "tagFun")));
-  const chips = el("div", "descriptor-chips");
-  (L === "th" ? arch.descriptors.th : arch.descriptors.en).forEach(d => chips.appendChild(el("span", "descriptor-chip", d)));
-  b3.appendChild(chips);
-  b3.appendChild(el("p", "story-text", L === "th" ? arch.story.th : arch.story.en));
-  root.appendChild(b3);
-
-  // Block 4: Pop culture
-  const b4 = el("div", "dash-block fade-in");
-  b4.appendChild(blockHead(t(L, "blockPopCulture")));
-  [["song", "music", arch.pop.song], ["movie", "film", arch.pop.movie], ["art", "frame", arch.pop.art]].forEach(([kind, iconKey, val]) => {
-    const row = el("div", "pop-row");
-    row.innerHTML = `<div class="pop-icon">${renderUIIcon(iconKey)}</div><div><div class="pop-meta">${t(L, "pop" + kind[0].toUpperCase() + kind.slice(1))}</div><div class="pop-title">${val}</div></div><div class="decade-tag">${arch.pop.decade}</div>`;
-    b4.appendChild(row);
-  });
-  root.appendChild(b4);
-
-  // Block 5: Eat by lucky colour
-  const b5 = el("div", "dash-block fade-in");
-  b5.appendChild(blockHead(t(L, "blockEatByColour"), "fun", t(L, "tagFun")));
-  const foodTiles = el("div", "food-tiles");
-  const foodData = wellness.food[L];
-  foodData.foods.forEach(f => {
-    const tile = el("div", "food-tile");
-    tile.innerHTML = `<div class="food-icon">${renderUIIcon("food")}</div><div class="name">${f}</div>`;
-    foodTiles.appendChild(tile);
-  });
-  b5.appendChild(foodTiles);
-  b5.appendChild(el("p", "fun-caption", `${foodData.line} · ${t(L, "eatCaption")}`));
-  root.appendChild(b5);
-
-  // Block 6: Good to know (evidence-informed)
-  const b6 = el("div", "dash-block fade-in");
-  b6.appendChild(blockHead(t(L, "blockGoodToKnow"), "evidence", t(L, "tagEvidence")));
-  [
-    [t(L, "labelHealthyEating"), wellness.healthyEating[L], wellness.healthyEating.source],
-    [t(L, "labelHolistic"), wellness.holistic[L], wellness.holistic.source],
-    [t(L, "labelAyurveda"), wellness.ayurveda[L], wellness.ayurveda.source]
-  ].forEach(([label, txt, src]) => {
-    const line = el("div", "evidence-line");
-    line.innerHTML = `<div class="txt"><strong>${label}:</strong> ${txt}</div><div class="src">${L === "th" ? "ที่มา" : "Source"}: ${src}</div>`;
-    b6.appendChild(line);
-  });
-  root.appendChild(b6);
-
-  // Block 7: Zen
-  const b7 = el("div", "dash-block tinted-yellow fade-in zen-block");
-  b7.appendChild(blockHead(t(L, "blockZen")));
-  b7.appendChild(el("p", "zen-copy", L === "th" ? arch.zen.th : arch.zen.en));
-  const timer = el("div", "zen-timer", "3:00");
-  b7.appendChild(timer);
-  const zenBtn = el("button", "btn-secondary", t(L, "zenStart"));
-  zenBtn.type = "button";
-  let zenInterval = null;
-  zenBtn.addEventListener("click", () => {
-    if (zenInterval) {
-      clearInterval(zenInterval); zenInterval = null;
-      timer.textContent = "3:00";
-      zenBtn.textContent = t(L, "zenStart");
-      return;
-    }
-    let secs = 180;
-    zenBtn.textContent = t(L, "zenCancel");
-    zenInterval = setInterval(() => {
-      secs--;
-      const m = Math.floor(secs / 60), s = secs % 60;
-      timer.textContent = `${m}:${String(s).padStart(2, "0")}`;
-      if (secs <= 0) { clearInterval(zenInterval); zenInterval = null; zenBtn.textContent = t(L, "zenStart"); }
-    }, 1000);
-  });
-  b7.appendChild(zenBtn);
-  root.appendChild(b7);
-
-  // Block 8: Compare souls
-  const b8 = el("div", "dash-block fade-in");
-  const head8 = blockHead(t(L, "blockCompare"));
-  const note8 = el("span", "chip placeholder", t(L, "compareNote"));
-  note8.style.padding = "4px 10px"; note8.style.fontSize = "10px";
-  head8.appendChild(note8);
-  b8.appendChild(head8);
-  const chartData = getCompareChartData(arch.num);
-  const chartWrap = el("div", "chart-wrap");
-  const maxPct = Math.max(...chartData.map(b => b.pct), 1);
-  chartData.forEach(bar => {
-    const col = el("div", "chart-col");
-    const barEl = el("div", "chart-bar" + (bar.isYou ? " you" : ""));
-    const heightPct = Math.max(10, (bar.pct / maxPct) * 100);
-    barEl.style.height = heightPct + "%";
-    if (!bar.isYou) barEl.style.background = bar.color;
-    const pctLabel = el("div", "chart-pct", bar.pct + "%");
-    col.appendChild(pctLabel);
-    col.appendChild(barEl);
-    col.appendChild(el("div", "chart-label", L === "th" ? bar.labelTh : bar.labelEn));
-    chartWrap.appendChild(col);
-  });
-  b8.appendChild(chartWrap);
-  b8.appendChild(el("div", "chart-note", t(L, "compareNote")));
-  root.appendChild(b8);
-
-  // Block 9: Share row
-  const b9 = el("div", "share-row");
-  const igBtn = el("button", "btn-primary", `<span class="btn-icon">${renderUIIcon("camera")}</span>${t(L, "igStoryBtn")}`);
-  igBtn.type = "button";
-  igBtn.addEventListener("click", () => openStoryOverlay(arch, zodiac, lucky, rarityPct));
-  b9.appendChild(igBtn);
-  const shareBtn = el("button", "btn-secondary", `<span class="btn-icon">${renderUIIcon("share")}</span>${t(L, "shareBtn")}`);
-  shareBtn.type = "button";
-  shareBtn.addEventListener("click", () => doShareResult(arch, rarityPct));
-  b9.appendChild(shareBtn);
-  const retakeBtn = el("button", "btn-secondary", `<span class="btn-icon">${renderUIIcon("retake")}</span>${t(L, "retakeBtn")}`);
-  retakeBtn.type = "button";
-  retakeBtn.addEventListener("click", retakeQuiz);
-  b9.appendChild(retakeBtn);
-  root.appendChild(b9);
-
-  // Block 10: Recommendation slot
-  const b10 = el("div", "dash-block rec-slot fade-in");
-  b10.appendChild(el("div", "block-title", t(L, "recSlotTitle")));
-  const recItem = el("div", "rec-item");
-  recItem.innerHTML = `<div class="swatch">${renderUIIcon("spark")}</div><div>${arch.recommendation}</div>`;
-  b10.appendChild(recItem);
-  b10.appendChild(el("p", "recSlotBody", t(L, "recSlotBody")));
-  root.appendChild(b10);
-
-  // Block 11: Disclaimer
-  root.appendChild(el("p", "disclaimer", t(L, "disclaimer")));
-
-  // Research dashboard link (dev-facing preview)
-  const researchRow = el("div", "research-link-row");
-  const researchLink = el("button", "btn-text", t(L, "researchLinkText"));
-  researchLink.type = "button";
-  researchLink.addEventListener("click", () => openResearchPreview(arch));
-  researchRow.appendChild(researchLink);
-  root.appendChild(researchRow);
-
-  setupFadeIns(root);
+  const descs = lang === "th" ? arch.descriptors.th : arch.descriptors.en;
+  return `
+    <section class="block">
+      <div class="block-head"><h3>${t(lang, "blockBirthday")}</h3>${tag("fun")}</div>
+      <div class="tile-grid">
+        <div class="tile"><small>${t(lang, "westernZodiac")}</small><b>${z.glyph} ${lang === "th" ? z.th : z.en}</b><span>${lang === "th" ? z.rangeTh : z.rangeEn}</span></div>
+        <div class="tile"><small>${t(lang, "elementLabel")}</small><b><i class="dot" style="background:${el.hex}"></i>${lang === "th" ? el.th : el.en}</b><span>${lang === "th" ? el.meaningTh : el.meaningEn}</span></div>
+        ${thaiDay ? `<div class="tile tile-wide"><small>${t(lang, "thaiDayLabel")} ${tag("tradition")}</small><b><i class="dot" style="background:${thaiDay.hex}"></i>${lang === "th" ? `${thaiDay.th} · ${thaiDay.colourTh}` : `${thaiDay.en} · ${thaiDay.colourEn}`}</b><span>${lang === "th" ? thaiDay.vibeTh : thaiDay.vibeEn}</span></div>` : ""}
+      </div>
+      <div class="horoscope"><small>${t(lang, "horoscopeLabel")}</small><p>${lang === "th" ? z.vibeTh : z.vibeEn}</p></div>
+    </section>
+    <section class="block">
+      <div class="block-head"><h3>${t(lang, "blockBrief")}</h3>${tag("fun")}</div>
+      <div class="trait-row big">${descs.map(d => `<span>${d}</span>`).join("")}</div>
+      <p class="story">${lang === "th" ? arch.story.th : arch.story.en}</p>
+    </section>
+    ${todayColourBlock()}`;
 }
 
-function blockHead(title, tagType, tagLabel) {
-  const head = el("div", "block-head");
-  head.appendChild(el("h3", "block-title", title));
-  if (tagType) head.appendChild(el("span", `layer-tag ${tagType}`, tagLabel));
-  return head;
+function todayColourBlock() {
+  const lang = L();
+  const dayName = lang === "th" ? today.day.th : today.day.en;
+  const cats = today.categories.map(c => `
+    <div class="cat${c.key === "avoid" ? " avoid" : ""}">
+      <div class="cat-swatches">${c.colours.map(col => `<i style="background:${col.hex}"></i>`).join("")}</div>
+      <div><b>${lang === "th" ? c.th : c.en}</b><span class="cat-col">${c.colours.map(colourName).join(", ")}</span><p>${lang === "th" ? c.lineTh : c.lineEn}</p></div>
+    </div>`).join("");
+  return `<section class="block today-card">
+    <div class="block-head"><h3>${t(lang, "blockToday", dayName)}</h3>${tag("evidence")}</div>
+    <div class="today-head"><i class="big-swatch" style="background:${today.headline.hex}"></i><div><small>${t(lang, "todayHeadline")}</small><b>${colourName(today.headline)}</b></div></div>
+    <div class="cat-grid">${cats}</div>
+    <p class="source">${today.expired ? t(lang, "todayExpired", today.yearBE) : t(lang, "todaySource", today.yearBE)}</p>
+  </section>`;
 }
 
-function setupFadeIns(root) {
-  const items = $$(".fade-in", root);
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    items.forEach(i => i.classList.add("in"));
-    return;
-  }
-  const obs = new IntersectionObserver((entries) => {
-    entries.forEach(entry => {
-      if (entry.isIntersecting) {
-        entry.target.classList.add("in");
-        obs.unobserve(entry.target);
-      }
-    });
-  }, { threshold: 0.15 });
-  items.forEach(i => obs.observe(i));
+function lifestyleTab(arch) {
+  const lang = L();
+  const sm = SOULMATCH[arch.num];
+  const p = state.result.picks;
+  const place = sm.places[p.place];
+  const wellness = getWellnessBundle(today.headlineKey);
+  const food = wellness.food[lang];
+  return `
+    <section class="pop-panel">
+      <div class="pop-head"><h3>${t(lang, "blockPop")}</h3><span class="decades">${t(lang, "popDecades")}</span></div>
+      <div class="pop-row"><span class="pop-ic">${renderUIIcon("music")}</span><div><small>${t(lang, "popSong")}</small><b>${sm.songs[p.song]}</b></div></div>
+      <div class="pop-row"><span class="pop-ic">${renderUIIcon("film")}</span><div><small>${t(lang, "popMovie")}</small><b>${sm.movies[p.movie]}</b></div></div>
+      <div class="pop-row"><span class="pop-ic">${renderUIIcon("spark")}</span><div><small>${t(lang, "popPlace")}</small><b>${lang === "th" ? place.th : place.en}</b><span>${lang === "th" ? place.whyTh : place.whyEn}</span></div></div>
+      <button type="button" class="reroll" data-action="reroll">${renderUIIcon("retake")}${t(lang, "reroll")}</button>
+    </section>
+    <section class="block">
+      <div class="block-head"><h3>${t(lang, "blockEat")}</h3>${tag("fun")}</div>
+      <div class="food-row">${food.foods.map(f => `<span class="food">${renderUIIcon("food")}${f}</span>`).join("")}</div>
+      <p class="caption">${food.line}</p>
+      <p class="caption muted">${t(lang, "eatCaption", colourName(today.headline))} · ${t(lang, "sourceWord")}: ${wellness.foodSource}</p>
+    </section>
+    <section class="block zen">
+      <div class="block-head"><h3>${t(lang, "blockZen")}</h3>${tag("fun")}</div>
+      <p>${lang === "th" ? arch.zen.th : arch.zen.en}</p>
+      <div class="zen-row">
+        <div class="zen-ring" id="zen-ring"><span id="zen-time">3:00</span></div>
+        <button type="button" class="zen-btn" id="zen-btn" data-action="zen">${t(lang, "zenStart")}</button>
+      </div>
+    </section>
+    <section class="block">
+      <div class="block-head"><h3>${t(lang, "blockSelfCare")}</h3>${tag("fun")}</div>
+      <p>${lang === "th" ? arch.wellness.th : arch.wellness.en}</p>
+    </section>
+    <section class="block evidence">
+      <div class="block-head"><h3>${t(lang, "blockGoodToKnow")}</h3>${tag("evidence")}</div>
+      ${[["labelHealthyEating", wellness.healthyEating], ["labelHolistic", wellness.holistic], ["labelAyurveda", wellness.ayurveda]].map(([k, n]) =>
+        `<div class="ev-line"><b>${t(lang, k)}</b><p>${n[lang]}</p><small>${t(lang, "sourceWord")}: ${n.source}</small></div>`).join("")}
+    </section>
+    <section class="rec-slot"><div class="rec-thumb">${renderUIIcon("spark")}</div><div><b>${t(lang, "recTitle")}</b><p>${t(lang, "recBody")}</p></div></section>`;
 }
 
-function retakeQuiz() {
-  state.step = 1;
-  state.qIndex = 0;
-  state.answers = {};
-  state.result = null;
-  sessionData.answers = {};
-  sessionData.archetype = null;
-  sessionData.scores = {};
-  persistSession();
-  renderCurrentStep();
-  window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
+function compareTab(arch) {
+  const lang = L();
+  const bars = getCompareChartData(arch.num);
+  const max = Math.max(...bars.map(b => b.pct));
+  const fills = ["var(--lilac)", "var(--pink)", "#FFFFFF"];
+  const rarity = getIllustrativeRarity(arch.num);
+  return `
+    <section class="block chart">
+      <div class="block-head"><h3>${t(lang, "blockCompare")}</h3>${tag("sample")}</div>
+      <div class="bars">
+        ${bars.map((b, i) => `<div class="bar-col">
+          <span class="bar-badge">${b.pct}%</span>
+          <div class="bar${b.isYou ? " you" : ""}" style="height:${Math.max(18, (b.pct / max) * 100)}%;${b.isYou ? "" : `background:${fills[i % 3]}`}"></div>
+          <span class="bar-label">${b.isYou ? `★ ${t(lang, "compareYou")}` : lang === "th" ? b.labelTh : b.labelEn}</span>
+        </div>`).join("")}
+      </div>
+    </section>
+    <div class="rarity-note"><span class="asterisk">✳</span><div><b>${t(lang, "rarityNote", rarity)}</b> ${tag("sample")}</div></div>
+    <button type="button" class="text-link" data-action="research">${t(lang, "researchLink")}</button>`;
 }
 
-// ---------- Research dashboard preview ----------
-function openResearchPreview(arch) {
-  const L = state.lang;
-  let overlay = $("#research-overlay");
-  if (!overlay) {
-    overlay = el("div", "research-overlay hidden");
-    overlay.id = "research-overlay";
-    document.body.appendChild(overlay);
-  }
-  const snap = getIllustrativeResearchSnapshot();
-  const topArch = ARCHETYPES.find(a => a.num === snap.topArchetypeNum);
-  overlay.innerHTML = "";
-  const panel = el("div", "research-panel");
-  panel.innerHTML = `<div class="research-badge">${t(L, "researchBadge")}</div>
-    <h2 style="font-family:var(--font-display);font-weight:800;">${t(L, "researchTitle")}</h2>`;
-  const statRow = el("div", "research-stat-row");
-  statRow.innerHTML = `
-    <div class="research-stat"><div class="n">${snap.totalPlayers.toLocaleString()}</div><div class="l">${t(L, "researchStat1")}</div></div>
-    <div class="research-stat"><div class="n">${L === "th" ? topArch.th : topArch.en}</div><div class="l">${t(L, "researchStat2")}</div></div>
-    <div class="research-stat"><div class="n">${L === "th" ? snap.standoutDimension.th : snap.standoutDimension.en}</div><div class="l">${t(L, "researchStat3")}</div></div>
-  `;
-  panel.appendChild(statRow);
-  panel.appendChild(el("div", "research-note", t(L, "researchInterpretation")));
-  const closeBtn = el("button", "btn-secondary", t(L, "researchClose"));
-  closeBtn.style.marginTop = "16px";
-  closeBtn.type = "button";
-  closeBtn.addEventListener("click", () => overlay.classList.add("hidden"));
-  panel.appendChild(closeBtn);
-  overlay.appendChild(panel);
-  overlay.classList.remove("hidden");
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.classList.add("hidden"); }, { once: true });
+// ---------- Zen timer (one interval only) ----------
+function syncZenUI() {
+  const ring = $("#zen-ring"), time = $("#zen-time"), btn = $("#zen-btn");
+  if (!ring) return;
+  const s = state.zen.secs;
+  time.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  ring.style.setProperty("--p", `${((180 - s) / 180) * 360}deg`);
+  btn.textContent = state.zen.interval ? t(L(), "zenStop") : s === 0 ? t(L(), "zenAgain") : t(L(), "zenStart");
 }
+function toggleZen() {
+  if (state.zen.interval) { clearInterval(state.zen.interval); state.zen.interval = null; syncZenUI(); return; }
+  if (state.zen.secs === 0) state.zen.secs = 180;
+  state.zen.interval = setInterval(() => {
+    state.zen.secs = Math.max(0, state.zen.secs - 1);
+    if (state.zen.secs === 0) { clearInterval(state.zen.interval); state.zen.interval = null; }
+    syncZenUI();
+  }, 1000);
+  syncZenUI();
+}
+function stopZen() { clearInterval(state.zen.interval); state.zen = { interval: null, secs: 180 }; }
 
-// ---------- IG Story overlay ----------
-async function openStoryOverlay(arch, zodiac, lucky, rarityPct) {
-  const L = state.lang;
+// ---------- Share / story / research ----------
+function currentArch() { return ARCHETYPES.find(a => a.num === state.result.num); }
+
+async function openStory() {
+  const lang = L();
+  const arch = currentArch();
+  const z = getZodiac(state.birthday.day, state.birthday.month);
   let overlay = $("#story-overlay");
   if (!overlay) {
-    overlay = el("div", "story-overlay hidden");
+    overlay = document.createElement("div");
     overlay.id = "story-overlay";
+    overlay.className = "overlay";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
     document.body.appendChild(overlay);
   }
-  overlay.innerHTML = "";
-  const canvasWrap = el("div", "story-canvas-wrap");
-  const canvas = document.createElement("canvas");
-  canvasWrap.appendChild(canvas);
-  overlay.appendChild(canvasWrap);
-
-  const actions = el("div", "story-actions");
-  const dlBtn = el("button", "btn-primary", t(L, "storyDownload"));
-  dlBtn.type = "button";
-  const closeBtn = el("button", "btn-secondary", t(L, "storyClose"));
-  closeBtn.type = "button";
-  closeBtn.addEventListener("click", () => overlay.classList.add("hidden"));
-  actions.appendChild(dlBtn);
-  actions.appendChild(closeBtn);
-  overlay.appendChild(actions);
-  overlay.classList.remove("hidden");
-
-  await renderStoryCanvas(canvas, {
+  overlay.innerHTML = `
+    <div class="overlay-head"><span>${t(lang, "storyHeader")}</span><button type="button" class="round-btn" data-action="close-story" aria-label="${t(lang, "storyClose")}">✕</button></div>
+    <div class="story-wrap"><canvas aria-label="${t(lang, "storyTitle")}"></canvas></div>
+    <button type="button" class="bar-cta story-save" data-action="save-story">${t(lang, "storyDownload")}</button>`;
+  overlay.hidden = false;
+  await renderStoryCanvas($("canvas", overlay), {
     archetype: arch,
-    lang: L,
-    zodiac: L === "th" ? zodiac.th : zodiac.en,
-    luckyColour: L === "th" ? lucky.names.th.join(" & ") : lucky.names.en.join(" & "),
-    rarityPct,
-    oneLiner: L === "th" ? arch.oneLiner.th : arch.oneLiner.en,
-    entityName: L === "th" ? arch.th : arch.en,
-    storyTitle: t(L, "storyTitle"),
-    storyFooter: t(L, "storyFooter")
-  });
-
-  dlBtn.addEventListener("click", async () => {
-    dlBtn.disabled = true;
-    const filename = `soul-zine-${arch.id.toLowerCase()}.png`;
-    await shareStoryImage(canvas, filename, t(L, "storyTitle"));
-    showToast(t(L, "toastSaved"));
-    dlBtn.disabled = false;
+    zodiac: `${z.glyph} ${lang === "th" ? z.th : z.en}`,
+    luckyColour: t(lang, "todayChip", colourName(today.headline)),
+    luckyHex: today.headline.hex,
+    rarityPct: getIllustrativeRarity(arch.num),
+    oneLiner: lang === "th" ? arch.oneLiner.th : arch.oneLiner.en,
+    entityName: lang === "th" ? arch.th : arch.en,
+    storyTitle: t(lang, "storyTitle"),
+    storyFooter: t(lang, "storyFooter")
   });
 }
 
-function doShareResult(arch, rarityPct) {
-  const L = state.lang;
-  const text = `${t(L, "shareMessage")} ${L === "th" ? arch.oneLiner.th : arch.oneLiner.en}`;
+async function saveStory() {
+  const arch = currentArch();
+  const btn = $(".story-save");
+  btn.disabled = true;
+  await shareStoryImage($("#story-overlay canvas"), `soulzine-${arch.id.toLowerCase()}.png`, t(L(), "storyTitle"));
+  showToast(t(L(), "toastSaved"));
+  btn.disabled = false;
+}
+
+function shareResult() {
+  const lang = L();
+  const arch = currentArch();
+  const text = `${lang === "th" ? arch.oneLiner.th : arch.oneLiner.en} — ${t(lang, "shareMessage")}`;
   if (navigator.share) {
     navigator.share({ text, url: location.href }).catch(() => {});
   } else if (navigator.clipboard) {
-    navigator.clipboard.writeText(`${text} ${location.href}`).then(() => showToast(t(L, "toastCopied")));
+    navigator.clipboard.writeText(`${text} ${location.href}`).then(() => showToast(t(lang, "toastCopied")));
+  } else {
+    showToast(t(lang, "toastCopied"));
   }
 }
 
-// ============================================================
-// Router
-// ============================================================
-function renderCurrentStep() {
-  $$(".screen").forEach(s => s.classList.remove("active"));
-  if (state.step === 1) { $("#screen-1").classList.add("active"); renderStep1(); }
-  else if (state.step === 2) { $("#screen-2").classList.add("active"); renderStep2(); }
-  else if (state.step === "loading") { $("#screen-loading").classList.add("active"); renderLoading(); }
-  else if (state.step === 3) { $("#screen-3").classList.add("active"); renderStep3(); }
-  document.documentElement.lang = state.lang;
+function openResearch() {
+  const lang = L();
+  const snap = getIllustrativeResearchSnapshot();
+  const top = ARCHETYPES.find(a => a.num === snap.topArchetypeNum);
+  let overlay = $("#research-overlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "research-overlay";
+    overlay.className = "overlay research";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    document.body.appendChild(overlay);
+  }
+  overlay.innerHTML = `<div class="research-panel">
+    <div class="research-badge">${t(lang, "researchBadge")}</div>
+    <h2>${t(lang, "researchTitle")}</h2>
+    <div class="research-stats">
+      <div><b>${snap.totalPlayers.toLocaleString()}</b><small>${t(lang, "researchStat1")}</small></div>
+      <div><b>${lang === "th" ? top.th : top.en}</b><small>${t(lang, "researchStat2")}</small></div>
+      <div><b>${lang === "th" ? snap.standoutDimension.th : snap.standoutDimension.en}</b><small>${t(lang, "researchStat3")}</small></div>
+    </div>
+    <p>${t(lang, "researchInterpretation")}</p>
+    <button type="button" class="nav-btn nav-prev" data-action="close-research">${t(lang, "researchClose")}</button>
+  </div>`;
+  overlay.hidden = false;
 }
 
-// Browser back button support (per DesignUX §2)
+function retake() {
+  stopZen();
+  state.result = null;
+  state.selections = {};
+  sessionData.answers = {};
+  sessionData.groups = {};
+  sessionData.shown = [];
+  sessionData.archetype = null;
+  sessionData.scores = {};
+  persistSession();
+  go(1, "back");      // birthday is kept (DesignUX §2)
+}
+
+// ============================================================
+// Router + events
+// ============================================================
+const SCREENS = { 1: "#screen-1", 2: "#screen-2", loading: "#screen-loading", 3: "#screen-3" };
+const RENDER = { 1: renderWelcome, 2: renderQuestion, loading: renderLoading, 3: renderResult };
+
+function go(step, direction) {
+  state.step = step;
+  render(direction);
+  window.scrollTo(0, 0);
+}
+
+function render(direction) {
+  $$(".screen").forEach(s => s.classList.remove("active"));
+  const screen = $(SCREENS[state.step]);
+  screen.classList.add("active");
+  RENDER[state.step]();
+  flip(screen, direction);
+  document.documentElement.lang = state.lang;
+  document.body.dataset.step = state.step;
+}
+
+function setLang(lang) {
+  if (lang === state.lang) return;
+  state.lang = lang;
+  persistSession();
+  render(null);       // switching never resets progress, answers or tab
+}
+
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b || b.disabled) return;
+  if (b.dataset.lang) return setLang(b.dataset.lang);
+  if (b.dataset.step) return stepBirthday(b.dataset.step, Number(b.dataset.dir));
+  if (b.dataset.weekday != null) {
+    const w = Number(b.dataset.weekday);
+    state.birthday.weekday = state.birthday.weekday === w ? null : w;   // tap again to clear
+    return updateBirthdayUI();
+  }
+  if (b.dataset.answer) return pickAnswer(b.dataset.answer);
+  if (b.dataset.tab != null) {
+    state.tab = Number(b.dataset.tab);
+    renderResult();
+    $(`#tab-${state.tab}`).focus();
+    return;
+  }
+  const actions = {
+    lang: () => setLang(state.lang === "th" ? "en" : "th"),
+    start: startQuiz,
+    back: handleBack,
+    next: nextQuestion,
+    story: openStory,
+    "save-story": saveStory,
+    "close-story": () => { $("#story-overlay").hidden = true; },
+    share: shareResult,
+    retake,
+    research: openResearch,
+    "close-research": () => { $("#research-overlay").hidden = true; },
+    zen: toggleZen,
+    reroll: () => { state.result.picks = drawSoulmatch(state.result.num); renderResult(); }
+  };
+  if (actions[b.dataset.action]) actions[b.dataset.action]();
+});
+
+// Arrow keys move between tabs (ARIA tab pattern)
+document.addEventListener("keydown", (e) => {
+  if (e.target.getAttribute && e.target.getAttribute("role") === "tab" && (e.key === "ArrowRight" || e.key === "ArrowLeft")) {
+    state.tab = (state.tab + (e.key === "ArrowRight" ? 1 : 3)) % 4;
+    renderResult();
+    $(`#tab-${state.tab}`).focus();
+  }
+  if (e.key === "Escape") $$(".overlay").forEach(o => { o.hidden = true; });
+});
+
+// Browser Back = previous question or step (DesignUX §2)
+history.pushState({ soulzine: true }, "");
 window.addEventListener("popstate", () => {
   if (state.step === 2) handleBack();
-  else if (state.step === 3) { /* stay: dashboard is the end state */ }
+  history.pushState({ soulzine: true }, "");
 });
-history.pushState({ app: true }, "");
-window.addEventListener("beforeunload", persistSession);
 
-renderCurrentStep();
+render(null);

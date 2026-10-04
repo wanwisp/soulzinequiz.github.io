@@ -54,7 +54,7 @@ const ARCHETYPES = [
     wellness: { en: "Routine-building content, checklist-style planning tools.", th: "คอนเทนต์สร้างรูทีน ลิสต์เช็คของทำเป็นประจำ" },
     zen: { en: "3-minute warm-water mindful breathing before checking tomorrow's weather, notifications off.", th: "หายใจลึกๆ กับน้ำอุ่น 3 นาที ก่อนเช็คพยากรณ์อากาศพรุ่งนี้ ปิดแจ้งเตือนก่อน" },
     pop: { song: "A steady mid-tempo 2010s Thai pop track", movie: "A dependable comfort-watch rom-com", art: "Clean geometric minimalism", decade: "2010s" },
-    oneLiner: { en: "I was the umbrella you buy every time you forget one. I show up. That's my whole personality.", th: "ชาติก่อนเป็นร่มที่แกซื้อทุกครั้งที่ลืม ฉันมาตลอดนะ นิสัยฉันมีแค่นี้แหละ" },
+    oneLiner: { en: "I was the umbrella you buy every time you forget one. I show up. That's my whole personality.", th: "ชาติก่อนเป็นร่มที่คุณซื้อทุกครั้งที่ลืม ฉันมาตลอดนะ นิสัยฉันมีแค่นี้แหละ" },
     tags: ["prepared","reliable","low-risk","routine-oriented"],
     recommendation: "Everyday-carry gadgets, organizer apps, weather/commute utility content."
   },
@@ -216,7 +216,7 @@ const ARCHETYPES = [
     wellness: { en: "Boundary-setting content — \"you don't owe anyone your energy.\"", th: "เนื้อหาเรื่องขอบเขตส่วนตัว ไม่ต้องเปลืองพลังให้ใครที่ไม่คุ้มค่า" },
     zen: { en: "3-minute warm-water mindful breathing in whatever spot feels warmest, notifications off.", th: "หายใจลึกๆ กับน้ำอุ่น 3 นาที ตรงมุมที่อุ่นที่สุด ปิดแจ้งเตือนก่อน" },
     pop: { song: "A laid-back 2010s Thai indie track", movie: "A quiet observational documentary-style film", art: "A candid street-photography-style piece", decade: "2010s" },
-    oneLiner: { en: "I was a soi cat. Nothing about your chaos is my problem.", th: "ชาติก่อนเป็นแมวจร ความวุ่นวายของแกไม่ใช่เรื่องของฉัน" },
+    oneLiner: { en: "I was a soi cat. Nothing about your chaos is my problem.", th: "ชาติก่อนเป็นแมวจร ความวุ่นวายของคุณไม่ใช่เรื่องของฉัน" },
     tags: ["independent","calm","low-stress","self-possessed"],
     recommendation: "Pet-adjacent lifestyle content, minimalist urban-living brands."
   },
@@ -306,7 +306,7 @@ const ARCHETYPES = [
     wellness: { en: "Ambient/atmosphere content — mood lighting, wind-down rituals.", th: "จัดแสงไฟให้อบอุ่น พิธีกรรมผ่อนคลายก่อนนอน" },
     zen: { en: "3-minute warm-water mindful breathing under dim warm lighting, notifications off.", th: "หายใจลึกๆ กับน้ำอุ่น 3 นาที ในแสงไฟสลัวอุ่นๆ ปิดแจ้งเตือนก่อน" },
     pop: { song: "A City Pop-influenced 80s track", movie: "A neon-lit retro drama", art: "Synthwave-style digital art", decade: "1980s" },
-    oneLiner: { en: "I was a flickering neon sign. Unreliable, but you'd still find your way home by me.", th: "ชาติก่อนเป็นไฟนีออนกะพริบ ไม่เสถียรหรอก แต่แกก็ยังหาทางกลับบ้านด้วยฉันได้" },
+    oneLiner: { en: "I was a flickering neon sign. Unreliable, but you'd still find your way home by me.", th: "ชาติก่อนเป็นไฟนีออนกะพริบ ไม่เสถียรหรอก แต่คุณก็ยังหาทางกลับบ้านด้วยฉันได้" },
     tags: ["nostalgic","dreamy","retro-aesthetic","pop-culture-lover"],
     recommendation: "Retro/synthwave merch, ambient lighting products."
   },
